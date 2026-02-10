@@ -409,9 +409,20 @@ function buildClientProfileContent(partner, client, activeTab, contentHtml, coun
       </nav>
       <div class="client-profile-meta">
         <a href="/partner/admin" class="client-profile-back">← К списку клиентов</a>
-        <h1 class="client-profile-name">${clientName}</h1>
+        <div class="client-profile-name-row">
+          <h1 class="client-profile-name">${clientName}</h1>
+          <button type="button" class="client-name-edit-btn" data-client-id="${client.id}" aria-label="Переименовать клиента">✏️</button>
+        </div>
         <p class="client-profile-id">ID: ${client.publicId || client.id}${client.notes ? ' · ' + String(client.notes).replace(/</g, '&lt;') : ''}</p>
         <a href="/p/${encodeURIComponent(partner.slug)}/c/${client.publicId || client.id}" class="client-profile-public" target="_blank" rel="noopener noreferrer">Публичная страница</a>
+        <form method="post" action="${base}/rename" class="client-name-edit-form">
+          <input type="text" name="name" class="client-name-edit-input" value="${clientName}" />
+          <button type="submit" class="client-name-edit-save">Сохранить</button>
+          <button type="button" class="client-name-edit-cancel">Отмена</button>
+        </form>
+        <form method="post" action="${base}/delete" class="client-delete-form" onsubmit="return confirm('Удалить клиента? Все его подборки и автомобили тоже будут удалены.');">
+          <button type="submit" class="client-delete-btn">Удалить клиента</button>
+        </form>
       </div>
     </header>
     <nav class="client-profile-tabs" aria-label="Разделы клиента">
@@ -437,10 +448,59 @@ const clientProfileStyles = `
   .client-profile-meta { min-width: 0; }
   .client-profile-back { display: inline-block; font-size: 13px; color: #4f46e5; text-decoration: none; margin-bottom: 8px; }
   .client-profile-back:hover { text-decoration: underline; }
+  .client-profile-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .client-profile-name { margin: 0 0 4px; font-size: 22px; font-weight: 600; color: #111827; letter-spacing: -0.02em; word-break: break-word; overflow-wrap: break-word; }
+  .client-name-edit-btn {
+    padding: 4px 6px;
+    border-radius: 999px;
+    border: none;
+    background: #eef2ff;
+    color: #4f46e5;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .client-name-edit-btn:hover { background: #e0e7ff; }
+  .client-name-edit-form {
+    margin-top: 8px;
+    display: none;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .client-name-edit-form.visible { display: flex; }
+  .client-name-edit-input {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    font-size: 14px;
+    min-width: 160px;
+  }
+  .client-name-edit-save {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: none;
+    background: #4f46e5;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .client-name-edit-cancel {
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: none;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
   .client-profile-id { margin: 0 0 10px; font-size: 13px; color: #6b7280; word-break: break-word; }
   .client-profile-public { font-size: 13px; color: #2563eb; text-decoration: none; }
   .client-profile-public:hover { text-decoration: underline; }
+  .client-delete-form { margin-top: 10px; }
+  .client-delete-btn { padding: 8px 12px; border-radius: 999px; border: none; background: #fef2f2; color: #b91c1c; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .client-delete-btn:hover { background: #fee2e2; }
   .client-profile-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; min-width: 0; }
   .client-profile-tab {
     display: inline-flex;
@@ -496,10 +556,31 @@ function buildClientProfileLayout(partner, client, activeTab, contentHtml, opts 
   const { pageTitle = '', extraStyles = '', extraScripts = '' } = opts;
   const counts = buildClientCriteriaHtml(partner, client);
   const profileHtml = buildClientProfileContent(partner, client, activeTab, contentHtml, counts);
+  const renameScript = `
+    <script>
+      (function() {
+        var editBtn = document.querySelector('.client-name-edit-btn');
+        var form = document.querySelector('.client-name-edit-form');
+        if (!editBtn || !form) return;
+        var input = form.querySelector('.client-name-edit-input');
+        var cancelBtn = form.querySelector('.client-name-edit-cancel');
+        editBtn.addEventListener('click', function() {
+          form.classList.add('visible');
+          if (input) { input.focus(); input.select(); }
+        });
+        if (cancelBtn) {
+          cancelBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            form.classList.remove('visible');
+          });
+        }
+      })();
+    </script>
+  `;
   return buildCabinetLayout(partner, 'clients', profileHtml, {
     pageTitle: (pageTitle || '') + (client.name ? ' — ' + client.name : ''),
     extraStyles: clientProfileStyles + extraStyles,
-    extraScripts,
+    extraScripts: (extraScripts || '') + renameScript,
   });
 }
 
@@ -646,6 +727,25 @@ router.post('/partner/login', async (req, res) => {
   return res.redirect('/partner/admin');
 });
 
+// Переименование клиента
+router.post('/partner/admin/clients/:clientId/rename', requirePartnerAuth, (req, res) => {
+  const partner = req.partner;
+  const clientId = Number(req.params.clientId);
+  if (!Number.isInteger(clientId) || clientId <= 0) {
+    return res.redirect('/partner/admin');
+  }
+  const client = Client.findById(clientId);
+  if (!client || client.partnerId !== partner.id) {
+    return res.redirect('/partner/admin');
+  }
+  const newNameRaw = (req.body && req.body.name) || '';
+  const newName = newNameRaw.trim();
+  if (newName) {
+    Client.updateName(clientId, newName);
+  }
+  return res.redirect('/partner/admin/clients/' + clientId);
+});
+
 router.post('/partner/logout', (req, res) => {
   clearPartnerCookie(res);
   res.redirect('/partner/login');
@@ -724,23 +824,48 @@ const adminClientsPageStyles = `
     flex-direction: column;
     gap: 8px;
   }
-  .client-list-link {
+  .client-list-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 16px 18px;
+    gap: 0;
     background: #fff;
     border-radius: 12px;
     border: 1px solid #e5e7eb;
+    padding: 10px 12px;
+    transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+  }
+  .client-list-item:hover { border-color: #c7d2fe; box-shadow: 0 4px 12px rgba(79,70,229,0.08); background: #faf5ff; }
+  .client-list-link {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    border: none;
     text-decoration: none;
     color: inherit;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    flex: 1;
+    min-width: 0;
   }
-  .client-list-link:hover { border-color: #c7d2fe; box-shadow: 0 4px 12px rgba(79,70,229,0.08); }
-  .client-list-name { font-weight: 600; font-size: 16px; color: #111827; flex: 1; min-width: 0; }
+  .client-list-name { font-weight: 600; font-size: 16px; color: #111827; flex: 1 1 auto; min-width: 0; }
   .client-list-meta { font-size: 13px; color: #6b7280; }
-  .client-list-arrow { font-size: 18px; color: #9ca3af; flex-shrink: 0; }
+  .client-list-arrow { font-size: 18px; color: #9ca3af; flex-shrink: 0; margin-left: 4px; }
   .client-list-empty { color: #6b7280; font-size: 14px; padding: 24px 0; margin: 0; }
+  .client-list-delete-form { margin: 0 0 0 auto; flex-shrink: 0; }
+  .client-list-delete-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: none;
+    background: #fef2f2;
+    color: #b91c1c;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .client-list-delete-btn:hover { background: #fee2e2; }
 
   .pagination {
     margin: 16px 0 0;
@@ -855,14 +980,18 @@ const adminClientsPageStyles = `
   @media (min-width: 768px) {
     .client-add-form-modal input { font-size: 14px; }
   }
-  @media (max-width: 599px) {
+  @media (max-width: 900px) {
     .cabinet-page-main { padding: 0 12px 24px; }
     .create-client { padding: 10px 12px; }
     .create-client-header { flex-wrap: wrap; }
     .create-client-header-main { flex: 1 1 auto; min-width: 0; }
     .client-filter .card { padding: 12px; }
-    .client-list-link { padding: 12px 14px; flex-wrap: wrap; gap: 8px; }
+    .client-list-item { padding: 10px 10px; gap: 8px; }
+    .client-list-link { flex-direction: column; align-items: flex-start; gap: 4px; }
+    .client-list-name-row { width: 100%; }
     .client-list-name { overflow: hidden; text-overflow: ellipsis; }
+    .client-list-meta { font-size: 12px; }
+    .client-list-arrow { font-size: 16px; }
     .pagination { justify-content: flex-start; }
   }
   @media (max-width: 480px) {
@@ -907,10 +1036,17 @@ router.get('/partner/admin', requirePartnerAuth, (req, res) => {
               (c) => `
             <li class="client-list-item">
               <a href="/partner/admin/clients/${c.id}" class="client-list-link">
-                <span class="client-list-name">${(c.name || '').replace(/</g, '&lt;')}</span>
-                <span class="client-list-meta">ID: ${c.publicId || c.id}${c.notes ? ' · ' + String(c.notes).replace(/</g, '&lt;') : ''}</span>
-                <span class="client-list-arrow">→</span>
+                <span class="client-list-main">
+                  <span class="client-list-name-row">
+                    <span class="client-list-name">${(c.name || '').replace(/</g, '&lt;')}</span>
+                    <span class="client-list-arrow">→</span>
+                  </span>
+                  <span class="client-list-meta">ID: ${c.publicId || c.id}${c.notes ? ' · ' + String(c.notes).replace(/</g, '&lt;') : ''}</span>
+                </span>
               </a>
+              <form method="post" action="/partner/admin/clients/${c.id}/delete" class="client-list-delete-form" onsubmit="return confirm('Удалить клиента? Все его подборки и автомобили тоже будут удалены.');">
+                <button type="submit" class="client-list-delete-btn" title="Удалить клиента" aria-label="Удалить клиента">&#128465;</button>
+              </form>
             </li>`
             )
             .join('')}
@@ -1608,6 +1744,21 @@ router.post('/partner/admin/clients', requirePartnerAuth, (req, res) => {
     notes: notes != null ? String(notes).trim() : null,
   });
   res.redirect('/partner/admin?newClient=' + client.id);
+});
+
+// Удаление клиента партнёром
+router.post('/partner/admin/clients/:clientId/delete', requirePartnerAuth, (req, res) => {
+  const partner = req.partner;
+  const clientId = Number(req.params.clientId);
+  if (!Number.isInteger(clientId) || clientId <= 0) {
+    return res.redirect('/partner/admin');
+  }
+  const client = Client.findById(clientId);
+  if (!client || client.partner_id !== partner.id) {
+    return res.redirect('/partner/admin');
+  }
+  Client.deleteById(clientId);
+  return res.redirect('/partner/admin');
 });
 
 // --- Client Workspace: маршруты Master–Detail ---

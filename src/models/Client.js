@@ -66,6 +66,22 @@ const Client = {
   },
 
   /**
+   * Обновить имя клиента
+   */
+  updateName(id, name) {
+    const stmt = db.prepare(`UPDATE clients SET name = ? WHERE id = ?`);
+    stmt.run(String(name || '').trim(), id);
+  },
+
+  /**
+   * Удалить клиента (жёстко) — используется в кабинете партнёра
+   */
+  deleteById(id) {
+    const stmt = db.prepare(`DELETE FROM clients WHERE id = ?`);
+    stmt.run(id);
+  },
+
+  /**
    * Обновить название подборки для клиента
    * @param {number} id — id клиента
    * @param {string | null} selectionName — название подборки (или null чтобы сбросить)
